@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <title>Manhunt Radar</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <style>
+    :root { color-scheme: dark; --bg:#0b1220; --panel:#121c2e; --line:#29364b; --muted:#a7b4c8; --text:#f4f7fb; --accent:#7dd3fc; --danger:#fb7185; --green:#86efac; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:var(--text); background:radial-gradient(ellipse at top,#17253c,var(--bg) 65%); min-height:100vh; }
+    main { width:min(900px,100%); margin:0 auto; padding:20px 14px 40px; }
+    header { display:flex; align-items:center; gap:12px; margin:4px 0 18px; }
+    .logo { display:grid; place-items:center; width:48px;height:48px;border-radius:15px;background:#164e63;font-size:25px; }
+    h1 { font-size:1.45rem; margin:0; letter-spacing:-.03em; }
+    .sub { margin:2px 0 0;color:var(--muted);font-size:.9rem; }
+    .card { background:rgba(18,28,46,.95); border:1px solid var(--line); border-radius:18px; padding:16px; margin:12px 0; box-shadow:0 12px 30px #0002; }
+    h2 { margin:0 0 12px;font-size:1.08rem; }
+    label { display:block; font-size:.88rem;color:var(--muted);margin:10px 0 5px; }
+    input,select,button { width:100%; border-radius:11px; border:1px solid #35445b; background:#0c1525; color:var(--text); padding:12px 13px; font:inherit; }
+    input::placeholder { color:#718198; }
+    button { background:#0e7490; border-color:#0e7490; font-weight:700; cursor:pointer; margin-top:12px; }
+    button.secondary { background:#202d42;border-color:#35445b; }
+    button:disabled { opacity:.5;cursor:wait; }
+    .grid { display:grid;grid-template-columns:1fr 1fr;gap:10px; }
+    .muted { color:var(--muted);font-size:.9rem; }
+    .notice { border-left:3px solid var(--accent);padding:10px 12px;background:#0c2233;border-radius:8px;color:#d8f2ff;font-size:.9rem; }
+    .warn { border-left-color:#fbbf24;background:#2b2413;color:#ffefc2; }
+    .hidden { display:none!important; }
+    .pill { display:inline-block;border-radius:999px;background:#202d42;padding:5px 9px;font-size:.8rem;color:#dce7f7; }
+    #map { width:100%;height:48vh;min-height:290px;border-radius:13px;overflow:hidden;background:#17253c; }
+    .status { display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0; }
+    .big { font-size:1.3rem;font-weight:800;font-variant-numeric:tabular-nums; }
+    .player { display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #263348;gap:10px; }
+    .player:last-child { border-bottom:0; }
+    .dot { display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;background:var(--green); }
+    .dot.red { background:var(--danger); }
+    .footer { text-align:center;color:#8290a6;font-size:.8rem;padding-top:12px; }
+    .leaflet-popup-content-wrapper,.leaflet-popup-tip { background:#111c2e;color:#f4f7fb; }
+    .leaflet-control-attribution { font-size:9px!important; }
+    @media(max-width:560px) { .grid { grid-template-columns:1fr; } main{padding:14px 10px 30px;} .card{padding:13px;} }
+  </style>
+</head>
+<body>
+<main>
+  <header><div class="logo">📡</div><div><h1>Manhunt Radar</h1><p class="sub">Un point GPS ponctuel, pas un suivi en direct.</p></div></header>
+
+  <section id="setup" class="card">
+    <h2>Créer une partie ou rejoindre</h2>
+    <div class="notice">Règle prévue : toutes les 5 minutes, chaque fugitif envoie <b>un seul point GPS</b> correspondant à sa position à cet instant. Les chasseurs le voient pendant 1 minute, puis il disparaît. Aucun trajet n'est enregistré.</div>
+    <label for="nickname">Ton pseudo</label><input id="nickname" maxlength="18" autocomplete="nickname" placeholder="Ex. RenardBleu" />
+    <div class="grid">
+      <div><label for="team">Ton équipe</label><select id="team"><option value="fugitive">Fugitifs · à pied</option><option value="hunter">Chasseurs · à vélo</option></select></div>
+      <div><label for="roomCode">Code de partie</label><input id="roomCode" maxlength="6" autocapitalize="characters" placeholder="6 lettres/chiffres" /></div>
+    </div>
+    <div class="grid"><button id="createBtn">Créer une partie</button><button id="joinBtn" class="secondary">Rejoindre la partie</button></div>
+    <p class="muted">Pour rejoindre, choisis ton équipe et saisis le code transmis par l'organisateur. Le code est privé : ne le publiez pas.</p>
+  </section>
+
+  <section id="game" class="hidden">
+    <div class="card">
+      <div class="status"><div><span class="pill" id="teamPill">Équipe</span><div class="big" id="roomLabel">Partie ———</div></div><button id="leaveBtn" class="secondary" style="width:auto;margin:0">Quitter</button></div>
+      <div class="grid">
+        <div><div class="muted">Prochaine révélation</div><div class="big" id="countdown">--:--</div></div>
+        <div><div class="muted">État du radar</div><div id="radarState" class="big">En attente</div></div>
+      </div>
+      <div id="permissionNotice" class="notice warn" style="margin-top:12px">Garde cette page ouverte pendant la partie. Les navigateurs peuvent suspendre le GPS si le téléphone est verrouillé ou si l'onglet passe en arrière-plan.</div>
+    </div>
+    <div class="card"><h2>Carte</h2><div id="map"></div><p class="muted" id="mapHelp">Les points des fugitifs n'apparaissent aux chasseurs que pendant 60 secondes après chaque révélation.</p></div>
+    <div class="card"><h2>Joueurs de la partie</h2><div id="playersList" class="muted">Chargement…</div></div>
+    <div class="card"><h2>Avant de jouer</h2><p class="muted">Chaque joueur doit accepter le partage de sa position. Jouez uniquement dans une zone autorisée, loin des routes dangereuses et sans obliger personne à partager sa position. Les chasseurs à vélo doivent respecter le code de la route. Le partage GPS nécessite une connexion et l'autorisation de localisation.</p></div>
+  </section>
+  <p class="footer">Prototype · Les positions ne sont envoyées qu'au moment du signal programmé, si la page est active et le GPS autorisé.</p>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+// CONFIGURATION : remplace ces valeurs par celles de TON projet Firebase.
+const firebaseConfig = {
+  apiKey: "AIzaSyBvnoiq-5jFGRXcGQ_w8HLsj_jld8d2sYY",
+  authDomain: "manhunt-f8b45.firebaseapp.com",
+  databaseURL: "https://manhunt-f8b45-default-rtdb.europe-west1.firebasedatabase.app/",
+  projectId: "manhunt-f8b45",
+  storageBucket: "manhunt-f8b45.firebasestorage.app",
+  messagingSenderId: "308998391456",
+  appId: "1:308998391456:web:9852f0d234146427ac2bc5"
+};
+const INTERVAL_MS = 5 * 60 * 1000;
+const VISIBLE_MS = 60 * 1000;
+let db, auth, user, roomCode = null, myTeam = null, myName = null, roomMeta = null;
+let map = null, markers = new Map(), playerData = {}, snapshotListeners = new Map(), countdownTimer = null, lastSentSlot = -1, roomListeners = [];
+const $ = id => document.getElementById(id);
+const show = (id, yes) => $(id).classList.toggle('hidden', !yes);
+function safeText(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function readyConfig() { return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.databaseURL && firebaseConfig.appId); }
+function initFirebase() {
+  if (!readyConfig()) { alert('Firebase doit être configuré avant de jouer. Ouvre README.md et suis les étapes de configuration.'); return false; }
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  auth = firebase.auth(); db = firebase.database(); return true;
+}
+async function ensureUser() { if (!auth.currentUser) await auth.signInAnonymously(); user = auth.currentUser; }
+function makeCode() { return Math.random().toString(36).slice(2,8).toUpperCase().replace(/[01IO]/g,'X'); }
+function cleanListeners() {
+  roomListeners.forEach(fn => { try { fn(); } catch(e){} }); roomListeners=[];
+  snapshotListeners.forEach((fn, uid) => { try { db.ref(`rooms/${roomCode}/snapshots/${uid}`).off('value', fn); } catch(e){} }); snapshotListeners.clear();
+  if (countdownTimer) clearInterval(countdownTimer); countdownTimer=null;
+}
+async function createGame() {
+  if (!initFirebase()) return;
+  const name = $('nickname').value.trim(); if (!name) return alert('Choisis un pseudo.');
+  $('createBtn').disabled = $('joinBtn').disabled = true;
+  try {
+    await ensureUser(); let code, ref, made = false;
+    for (let i=0;i<8 && !made;i++) {
+      code=makeCode(); ref=db.ref(`rooms/${code}/meta`);
+      try {
+        await ref.set({hostId:user.uid, createdAt:firebase.database.ServerValue.TIMESTAMP, intervalMs:INTERVAL_MS, visibleMs:VISIBLE_MS});
+        made=true;
+      } catch (err) { if (i===7) throw err; }
+    }
+    if (!made) throw new Error('Impossible de créer un code, réessaie.');
+    await db.ref(`rooms/${code}/players/${user.uid}`).set({name,team:$('team').value,joinedAt:firebase.database.ServerValue.TIMESTAMP});
+    await enterGame(code, name, $('team').value);
+  } catch(e) { alert('Création impossible : '+e.message); }
+  finally { $('createBtn').disabled = $('joinBtn').disabled = false; }
+}
+async function joinGame() {
+  if (!initFirebase()) return;
+  const name=$('nickname').value.trim(), code=$('roomCode').value.trim().toUpperCase();
+  if (!name) return alert('Choisis un pseudo.'); if (!/^[A-Z0-9]{6}$/.test(code)) return alert('Le code doit contenir 6 lettres ou chiffres.');
+  $('createBtn').disabled = $('joinBtn').disabled = true;
+  try {
+    await ensureUser(); const metaSnap=await db.ref(`rooms/${code}/meta`).once('value'); if (!metaSnap.exists()) throw new Error('Code de partie introuvable.');
+    const existing=await db.ref(`rooms/${code}/players/${user.uid}`).once('value');
+    if (!existing.exists()) await db.ref(`rooms/${code}/players/${user.uid}`).set({name,team:$('team').value,joinedAt:firebase.database.ServerValue.TIMESTAMP});
+    await enterGame(code,name,$('team').value);
+  } catch(e) { alert('Impossible de rejoindre : '+e.message); }
+  finally { $('createBtn').disabled = $('joinBtn').disabled = false; }
+}
+async function enterGame(code,name,team) {
+  roomCode=code; myName=name; myTeam=team;
+  roomMeta=(await db.ref(`rooms/${code}/meta`).once('value')).val();
+  $('roomLabel').textContent='Partie '+code; $('teamPill').textContent=team==='hunter'?'Chasseurs · vélo':'Fugitifs · à pied';
+  $('teamPill').style.background=team==='hunter'?'#3b2a18':'#153a32';
+  show('setup',false); show('game',true);
+  if (!map) { map=L.map('map').setView([50.64,5.57],13); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map); }
+  setTimeout(()=>map.invalidateSize(),200);
+  const playersRef=db.ref(`rooms/${code}/players`);
+  const playersCb=snap=>{
+    playerData=snap.val()||{}; renderPlayers();
+    if (myTeam==='hunter') syncSnapshotListeners();
+  };
+  playersRef.on('value',playersCb); roomListeners.push(()=>playersRef.off('value',playersCb));
+  if (team==='hunter') $('mapHelp').textContent='Chaque point représente une position capturée à un instant précis. Les points expirent après 60 secondes.';
+  else $('mapHelp').textContent='Ta position n’est pas suivie en continu. Un seul point sera envoyé au moment de chaque signal.';
+  startClock();
+}
+function renderPlayers() {
+  const entries=Object.entries(playerData);
+  $('playersList').innerHTML=entries.map(([uid,p])=>`<div class="player"><span><span class="dot ${p.team==='hunter'?'red':''}"></span>${safeText(p.name)}${uid===user.uid?' (toi)':''}</span><span class="pill">${p.team==='hunter'?'Chasseur':'Fugitif'}</span></div>`).join('') || 'Aucun joueur.';
+}
+function syncSnapshotListeners() {
+  for (const [uid,p] of Object.entries(playerData)) {
+    if (p.team!=='fugitive' || snapshotListeners.has(uid)) continue;
+    const ref=db.ref(`rooms/${roomCode}/snapshots/${uid}`);
+    const cb=snap=>{
+      const point=snap.val();
+      if (!point || !point.expiresAt || point.expiresAt<=Date.now()) { removeMarker(uid); return; }
+      setMarker(uid,p,point);
+      const delay=Math.max(0,point.expiresAt-Date.now()); setTimeout(()=>{ const m=markers.get(uid); if (m && m.expiresAt<=Date.now()) removeMarker(uid); },delay+100);
+    };
+    ref.on('value',cb,()=>removeMarker(uid)); snapshotListeners.set(uid,cb);
+  }
+  for (const uid of [...snapshotListeners.keys()]) if (!playerData[uid] || playerData[uid].team!=='fugitive') { db.ref(`rooms/${roomCode}/snapshots/${uid}`).off('value',snapshotListeners.get(uid)); snapshotListeners.delete(uid); removeMarker(uid); }
+}
+function setMarker(uid,p,point) {
+  if (myTeam!=='hunter') return;
+  const lat=Number(point.lat),lng=Number(point.lng); if (!Number.isFinite(lat)||!Number.isFinite(lng)) return;
+  const expiry=Number(point.expiresAt);
+  if (expiry<=Date.now()) { removeMarker(uid); return; }
+  const popup=`<b>${safeText(p.name)}</b><br>Point capturé à ${new Date(point.capturedAt).toLocaleTimeString('fr-BE')}<br>Expire à ${new Date(expiry).toLocaleTimeString('fr-BE')}`;
+  let marker=markers.get(uid);
+  if (!marker) { marker=L.circleMarker([lat,lng],{radius:9,color:'#fb7185',fillColor:'#fb7185',fillOpacity:.9,weight:2}).addTo(map); markers.set(uid,marker); }
+  marker.setLatLng([lat,lng]); marker.expiresAt=expiry; marker.bindPopup(popup);
+  $('radarState').textContent='Signal reçu'; $('radarState').style.color='#86efac';
+}
+function removeMarker(uid) { const marker=markers.get(uid); if (marker && map) map.removeLayer(marker); markers.delete(uid); if (myTeam==='hunter' && markers.size===0) { $('radarState').textContent='Silence radio'; $('radarState').style.color=''; } }
+function startClock() {
+  if (countdownTimer) clearInterval(countdownTimer);
+  const created=Number(roomMeta.createdAt);
+  countdownTimer=setInterval(async()=>{
+    const now=Date.now(), elapsed=Math.max(0,now-created), slot=Math.floor(elapsed/INTERVAL_MS), next=created+(slot+1)*INTERVAL_MS;
+    $('countdown').textContent=formatTime(Math.max(0,next-now));
+    if (slot>lastSentSlot) {
+      // On n'envoie pas de position au chargement initial si le joueur a rejoint en retard.
+      if (lastSentSlot>=0 && myTeam==='fugitive') await sendSnapshot();
+      lastSentSlot=slot;
+    }
+    // Masquage local fiable au retour d'un onglet suspendu.
+    for (const [uid,m] of markers) if (m.expiresAt<=now) removeMarker(uid);
+  },1000);
+  lastSentSlot=Math.floor(Math.max(0,Date.now()-created)/INTERVAL_MS);
+  document.addEventListener('visibilitychange',()=>{ if (!document.hidden) { for (const [uid,m] of markers) if (m.expiresAt<=Date.now()) removeMarker(uid); } });
+}
+function formatTime(ms) { const s=Math.ceil(ms/1000); return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; }
+function sendSnapshot() {
+  if (!navigator.geolocation) { $('radarState').textContent='GPS indisponible'; return; }
+  $('radarState').textContent='Capture GPS…'; $('radarState').style.color='';
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const capturedAt=Date.now();
+    const point={lat:pos.coords.latitude,lng:pos.coords.longitude,capturedAt,expiresAt:capturedAt+VISIBLE_MS};
+    const snapshotRef = db.ref(`rooms/${roomCode}/snapshots/${user.uid}`);
+    try {
+      await snapshotRef.set(point);
+      $('radarState').textContent='Point envoyé'; $('radarState').style.color='#86efac';
+      // Best-effort cleanup. Security rules also reject reads after expiresAt,
+      // so an expired point is not visible even if this browser is suspended.
+      setTimeout(async () => {
+        try {
+          const current = await snapshotRef.once('value');
+          if (current.exists() && Number(current.val().capturedAt) === capturedAt) await snapshotRef.remove();
+        } catch (_) { /* Expired points are already unreadable under the rules. */ }
+      }, VISIBLE_MS + 1500);
+    }
+    catch(e) { $('radarState').textContent='Envoi impossible'; console.error(e); }
+  },err=>{ $('radarState').textContent='GPS refusé / indisponible'; alert('Le point GPS n’a pas pu être envoyé. Vérifie l’autorisation de localisation et que le site est ouvert en HTTPS.'); },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
+}
+async function leaveGame() {
+  cleanListeners();
+  if (roomCode && user) {
+    try { await db.ref(`rooms/${roomCode}/players/${user.uid}`).remove(); await db.ref(`rooms/${roomCode}/snapshots/${user.uid}`).remove(); } catch(e){}
+  }
+  markers.forEach(m=>map?.removeLayer(m)); markers.clear(); playerData={}; roomCode=null; roomMeta=null; myTeam=null;
+  show('game',false); show('setup',true);
+}
+$('createBtn').addEventListener('click',createGame); $('joinBtn').addEventListener('click',joinGame); $('leaveBtn').addEventListener('click',leaveGame);
+$('roomCode').addEventListener('input',e=>e.target.value=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6));
+</script>
+</body>
+</html>
